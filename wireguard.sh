@@ -213,7 +213,12 @@ install_wg_1() {
             _error_detect "dnf -y install wireguard-dkms wireguard-tools"
             ;;
         centos)
-            _error_detect "curl -Lso /etc/yum.repos.d/wireguard.repo https://copr.fedorainfracloud.org/coprs/jdoss/wireguard/repo/epel-7/jdoss-wireguard-epel-7.repo"
+            if [ -n "$(_os_ver)" -a "$(_os_ver)" -eq 7 ]; then
+                _error_detect "curl -Lso /etc/yum.repos.d/wireguard.repo https://copr.fedorainfracloud.org/coprs/jdoss/wireguard/repo/epel-7/jdoss-wireguard-epel-7.repo"
+            fi
+            if [ -n "$(_os_ver)" -a "$(_os_ver)" -eq 8 ]; then
+                _error_detect "curl -Lso /etc/yum.repos.d/wireguard.repo https://copr.fedorainfracloud.org/coprs/jdoss/wireguard/repo/epel-8/jdoss-wireguard-epel-8.repo"
+            fi
             _error_detect "yum -y install epel-release"
             _error_detect "yum -y install kernel-devel"
             _error_detect "yum -y install kernel-headers"
@@ -255,6 +260,7 @@ install_wg_2() {
             _error_detect "dnf -y install gcc"
             _error_detect "dnf -y install make"
             _error_detect "dnf -y install libmnl-devel"
+            _error_detect "dnf -y install elfutils-libelf-devel"
             ;;
         centos)
             _error_detect "yum -y install epel-release"
@@ -263,7 +269,10 @@ install_wg_2() {
             _error_detect "yum -y install bc"
             _error_detect "yum -y install gcc"
             _error_detect "yum -y install make"
+            _error_detect "yum -y install yum-utils"
+            [ -n "$(_os_ver)" -a "$(_os_ver)" -eq 8 ] && _error_detect "yum-config-manager --enable PowerTools"
             _error_detect "yum -y install libmnl-devel"
+            _error_detect "yum -y install elfutils-libelf-devel"
             ;;
         *)
             ;; # do nothing
@@ -281,6 +290,37 @@ install_wg_2() {
     if ! _is_installed; then
         _error "Failed to install wireguard, the kernel is most likely not configured correctly"
     fi
+}
+
+# Uninstall WireGuard
+uninstall_wg() {
+    if ! _is_installed; then
+        _error "WireGuard is not installed"
+    fi
+    _info "Uninstall WireGuard start"
+    # stop wireguard at first
+    _error_detect "systemctl stop wg-quick@${SERVER_WG_NIC}"
+    _error_detect "systemctl disable wg-quick@${SERVER_WG_NIC}"
+    # if wireguard has been installed from repository
+    if _exists "yum" && _exists "rpm"; then
+        if rpm -qa | grep -q wireguard; then
+            _error_detect "yum -y remove wireguard-dkms wireguard-tools"
+        fi
+    elif _exists "apt" && _exists "apt-get"; then
+        if apt list --installed | grep -q wireguard; then
+            _error_detect "apt-get -y remove wireguard"
+        fi
+    fi
+    # if wireguard has been installed from source
+    if _is_installed; then
+        _error_detect "rm -f /usr/bin/wg"
+        _error_detect "rm -f /usr/bin/wg-quick"
+        _error_detect "rm -f /usr/share/man/man8/wg.8"
+        _error_detect "rm -f /usr/share/man/man8/wg-quick.8"
+        _exists "modprobe" && _error_detect "modprobe -r wireguard"
+    fi
+    [ -d "/etc/wireguard" ] && _error_detect "rm -fr /etc/wireguard"
+    _info "Uninstall WireGuard completed"
 }
 
 # Create server interface
@@ -615,6 +655,7 @@ Options:
         -a, --add        Add a WireGuard client
         -d, --del        Delete a WireGuard client
         -l, --list       List all WireGuard client's IP
+        -n, --uninstall  Uninstall WireGuard
 
 "
 }
@@ -651,6 +692,7 @@ update_from_source() {
         if _version_gt "${wireguard_ver}" "${installed_wg_ver}"; then
             _info "Starting upgrade WireGuard"
             install_wg_2
+            _error_detect "systemctl daemon-reload"
             _error_detect "systemctl restart wg-quick@${SERVER_WG_NIC}"
             _info "Update WireGuard completed"
         else
@@ -704,6 +746,9 @@ main() {
             ;;
         -l|--list)
             list_clients
+            ;;
+        -n|--uninstall)
+            uninstall_wg
             ;;
         *)
             show_help
